@@ -514,5 +514,3 @@ with open(filename, mode='w') as metrics_file:
 dir_to_save = '/content/drive/MyDrive/Main Project/'
 shutil.copyfile(filename,dir_to_save+'mixed32.csv')
 
-from google.colab import drive
-drive.mount('/content/drive')

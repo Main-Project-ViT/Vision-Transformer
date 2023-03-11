@@ -1,8 +1,17 @@
 import tensorflow as tf
-from tensorflow import keras
-from tensorflow.keras import layers
-import numpy as np
+tf.__version__
+import glob
+import imageio
 import matplotlib.pyplot as plt
+import numpy as np
+import os
+import PIL
+from tensorflow.keras import layers
+import time
+import shutil
+from IPython import display
+
+#dataset loading
 !pip install kaggle
 
 import os
@@ -53,8 +62,9 @@ download_dataset("full")
 
 data_files = os.listdir("dataset/chest_xray")
 print(data_files)
+
 def resample_data(move_from, move_to, cl, images_to_move=100):
-  path = path_prefix + 'dataset/chest_xray/'
+      path = path_prefix + 'dataset/chest_xray/'
 
   classes = os.listdir(path + move_from)
 
@@ -89,33 +99,76 @@ print('Number of NORMAL test images:')
 print('Number of PNEUMONIA test images:')
 !ls /content/dataset/chest_xray/test/PNEUMONIA/ | wc -l
 
+import os
+import cv2
+import numpy as np
+from google.colab.patches import cv2_imshow
+
+# Set the directory containing the Kaggle dataset
+train_dir = '/content/dataset/chest_xray/train/NORMAL/'
+
+# Get a list of all the image filenames in the directory
+filenames = os.listdir(train_dir)
+
+# Read in each image and store it in a numpy array
+train_images = []
+for filename in filenames:
+    img = cv2.imread(os.path.join(train_dir, filename))
+    # Resize the image to 28x28 (or whatever size is appropriate for your dataset)
+    img = cv2.resize(img, (128,128))
+    # Convert the image to grayscale and reshape it to have a shape of (28, 28, 1)
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    img = np.reshape(img, (128, 128, 1))
+    train_images.append(img)
+cv2_imshow(img)
+# Convert the list of images to a numpy array
+train_images = np.array(train_images)
+
+# Normalize the pixel values to be in the range [-1, 1]
+train_images = (train_images.astype('float32') - 127.5) / 127.5
+
+# Batch and shuffle the data
+BUFFER_SIZE=1341
+BATCH_SIZE=256
+train_dataset = tf.data.Dataset.from_tensor_slices(train_images).shuffle(BUFFER_SIZE).batch(BATCH_SIZE)
+
 def make_generator_model():
-    model = keras.Sequential()
-    model.add(layers.Dense(7*7*256, use_bias=False, input_shape=(100,)))
+    model = tf.keras.Sequential()
+    model.add(layers.Dense(32*32*256, use_bias=False, input_shape=(100,)))
     model.add(layers.BatchNormalization())
     model.add(layers.LeakyReLU())
 
-    model.add(layers.Reshape((7, 7, 256)))
-    assert model.output_shape == (None, 7, 7, 256)
+    model.add(layers.Reshape((32,32, 256)))
+    print(model.output_shape)
+    assert model.output_shape == (None,32,32, 256)  # Note: None is the batch size
 
     model.add(layers.Conv2DTranspose(128, (5, 5), strides=(1, 1), padding='same', use_bias=False))
-    assert model.output_shape == (None, 7, 7, 128)
+    assert model.output_shape == (None, 32,32, 128)
     model.add(layers.BatchNormalization())
     model.add(layers.LeakyReLU())
 
     model.add(layers.Conv2DTranspose(64, (5, 5), strides=(2, 2), padding='same', use_bias=False))
-    assert model.output_shape == (None, 14, 14, 64)
+    assert model.output_shape == (None, 64,64, 64)
     model.add(layers.BatchNormalization())
     model.add(layers.LeakyReLU())
 
     model.add(layers.Conv2DTranspose(1, (5, 5), strides=(2, 2), padding='same', use_bias=False, activation='tanh'))
-    assert model.output_shape == (None, 28, 28, 1)
+    print(model.output_shape)
+    assert model.output_shape == (None,128,128, 1)
 
     return model
 
+generator = make_generator_model()
+
+noise = tf.random.normal([1, 100])
+generated_image = generator(noise, training=False)
+
+plt.imshow(generated_image[0, :, :, 0], cmap='gray')
+
 def make_discriminator_model():
-    model = keras.Sequential()
-    model.add(layers.Conv2D(64, (5, 5), strides=(2, 2), padding='same', input_shape=[28, 28, 1]))
+    model = tf.keras.Sequential()
+    model.add(layers.Conv2D(64, (5, 5), strides=(2, 2), padding='same',
+                                     input_shape=[128, 128, 1]))
     model.add(layers.LeakyReLU())
     model.add(layers.Dropout(0.3))
 
@@ -128,98 +181,110 @@ def make_discriminator_model():
 
     return model
 
-# Compile the discriminator and generator models
-from tensorflow.keras.optimizers import Adam
-discriminator.compile(loss='binary_crossentropy', optimizer=Adam(lr=0.0002, beta_1=0.5), metrics=['accuracy'])
-generator.compile(loss='binary_crossentropy', optimizer=Adam(lr=0.0002, beta_1=0.5))
+discriminator = make_discriminator_model()
+decision = discriminator(generated_image)
+print (decision)
 
-from tensorflow.keras.preprocessing.image import ImageDataGenerator
-import numpy as np
+# This method returns a helper function to compute cross entropy loss
+cross_entropy = tf.keras.losses.BinaryCrossentropy(from_logits=True)
 
-# Define the number of epochs and batch size
-epochs = 10000
-batch_size = 128
-latent_dim = 100
+def discriminator_loss(real_output, fake_output):
+    real_loss = cross_entropy(tf.ones_like(real_output), real_output)
+    fake_loss = cross_entropy(tf.zeros_like(fake_output), fake_output)
+    total_loss = real_loss + fake_loss
+    return total_loss
 
-# set path to the directory containing training data
-train_dir = '/content/dataset/chest_xray/train/PNEUMONIA'
-image_shape=[28,28,1]
+def generator_loss(fake_output):
+    return cross_entropy(tf.ones_like(fake_output), fake_output)
 
-# set path to the training data directory
-train_datagen = ImageDataGenerator(rescale=1./255)
-train_generator = train_datagen.flow_from_directory(train_dir, target_size=image_shape[:2], batch_size=batch_size, class_mode='binary')
-X_train, y_train = train_generator.next()
+generator_optimizer = tf.keras.optimizers.Adam(1e-4)
+discriminator_optimizer = tf.keras.optimizers.Adam(1e-4)
 
-# Define the number of batches per epoch
-batch_count = int(X_train.shape[0] / batch_size)
+checkpoint_dir = './training_checkpoints'
+checkpoint_prefix = os.path.join(checkpoint_dir, "ckpt")
+checkpoint = tf.train.Checkpoint(generator_optimizer=generator_optimizer,
+                                 discriminator_optimizer=discriminator_optimizer,
+                                 generator=generator,
+                                 discriminator=discriminator)
 
-# Define the noise vector to generate fake images
-noise = np.random.normal(0, 1, (batch_size, latent_dim))
+EPOCHS = 70
+noise_dim = 100
+num_examples_to_generate = 16
 
-# Define lists to keep track of the loss and accuracy of the discriminator and generator
-d_loss_history = []
-d_acc_history = []
-g_loss_history = []
+# You will reuse this seed overtime (so it's easier)
+# to visualize progress in the animated GIF)
+seed = tf.random.normal([num_examples_to_generate, noise_dim])
 
-# Define a function to generate a grid of images from the generator
-def generate_images(generator, epoch):
-  # Generate fake images from the generator
-  fake_images = generator.predict(noise)
+# Notice the use of `tf.function`
+# This annotation causes the function to be "compiled".
+@tf.function
+def train_step(images):
+    noise = tf.random.normal([BATCH_SIZE, noise_dim])
 
-  # Rescale the pixel values from [-1, 1] to [0, 1]
-  fake_images = 0.5 * fake_images + 0.5
+    with tf.GradientTape() as gen_tape, tf.GradientTape() as disc_tape:
+      generated_images = generator(noise, training=True)
 
-  # Create a grid of images
-  fig, ax = plt.subplots(8, 8, figsize=(8, 8))
-  #print(fake_images.shape)
-  for i, ax_i in enumerate(ax.flatten()):
-    # Get the i-th fake image
-    img = fake_images[i,:, 0]
-    
-    # Plot the image on the i-th subplot
-    ax_i.imshow(img, cmap='gray')
-    ax_i.axis('off')
+      real_output = discriminator(images, training=True)
+      fake_output = discriminator(generated_images, training=True)
+
+      gen_loss = generator_loss(fake_output)
+      disc_loss = discriminator_loss(real_output, fake_output)
+
+    gradients_of_generator = gen_tape.gradient(gen_loss, generator.trainable_variables)
+    gradients_of_discriminator = disc_tape.gradient(disc_loss, discriminator.trainable_variables)
+
+    generator_optimizer.apply_gradients(zip(gradients_of_generator, generator.trainable_variables))
+    discriminator_optimizer.apply_gradients(zip(gradients_of_discriminator, discriminator.trainable_variables))
+
+    def train(dataset, epochs):
+      for epoch in range(epochs):
+    start = time.time()
+
+    for image_batch in dataset:
+      train_step(image_batch)
+
+    # Produce images for the GIF as you go
+    display.clear_output(wait=True)
+    generate_and_save_images(generator,
+                             epoch + 1,
+                             seed)
+
+    # Save the model every 15 epochs
+    if (epoch + 1) % 15 == 0:
+      checkpoint.save(file_prefix = checkpoint_prefix)
+
+    print ('Time for epoch {} is {} sec'.format(epoch + 1, time.time()-start))
+    #print(f"Epoch {epoch+1}, Discriminator Loss: {disc_loss}, Generator Loss: {gen_loss}")
+  # Generate after the final epoch
+  display.clear_output(wait=True)
+  generate_and_save_images(generator,
+                           epochs,
+                           seed)
+
+def generate_and_save_images(model, epoch, test_input):
+      # Notice `training` is set to False.
+  # This is so all layers run in inference mode (batchnorm).
+  predictions = model(test_input, training=False)
+
+  fig = plt.figure(figsize=(8,8))
+
+  for i in range(predictions.shape[0]):
+      plt.subplot(4, 4, i+1)
+      plt.imshow(predictions[i, :, :, 0] * 127.5 + 127.5, cmap='gray')
+      plt.axis('off')
+
+  plt.savefig('image_at_epoch_{:04d}.png'.format(epoch))
   plt.show()
-  
-  # Save the grid of images to a file
-  fig.savefig('generated_images_epoch_%d.png' % epoch)
 
-# Iterate over the epochs
-for epoch in range(epochs):
-  # Initialize the loss and accuracy of the discriminator and generator
-  d_loss = 0
-  d_acc = 0
-  g_loss = 0
-  
-  # Iterate over the batches
-  for batch_index in range(batch_count):
-    # Select a batch of real images
-    real_images = X_train[batch_index * batch_size:(batch_index + 1) * batch_size]
+  # Save to Google Drive
+  shutil.copy(f"image_at_epoch_{epoch:04d}.png", f"/content/drive/My Drive/GAN_images/image_at_epoch_{epoch:04d}.png")
 
-    # Generate a batch of fake images from the generator
-    fake_images = generator.predict(np.random.normal(0, 1, (batch_size, latent_dim)))
+train(train_dataset, EPOCHS)
 
-    # Train the discriminator on the batch of real images
-    d_loss_real, d_acc_real = discriminator.train_on_batch(real_images, np.ones((batch_size, 1)))
+checkpoint.restore(tf.train.latest_checkpoint(checkpoint_dir))
 
-    # Train the discriminator on the batch of fake images
-    d_loss_fake, d_acc_fake = discriminator.train_on_batch(fake_images, np.zeros((batch_size, 1)))
+# Display a single image using the epoch number
+def display_image(epoch_no):
+  return PIL.Image.open('image_at_epoch_{:04d}.png'.format(epoch_no))
 
-    # Compute the average loss and accuracy of the discriminator
-    d_loss = (d_loss_real + d_loss_fake) / 2
-    d_acc = (d_acc_real + d_acc_fake) / 2
-
-    # Train the generator to fool the discriminator
-    g_loss = gan.train_on_batch(np.random.normal(0, 1, (batch_size, latent_dim)), np.ones((batch_size, 1)))
-
-  # Print the loss and accuracy of the discriminator and generator for each epoch
-  print('Epoch %d: d_loss = %f, d_acc = %f, g_loss = %f' % (epoch, d_loss, d_acc, g_loss))
-
-  # Add the loss and accuracy of the discriminator and generator to the history lists
-  d_loss_history.append(d_loss)
-  d_acc_history.append(d_acc)
-  g_loss_history.append(g_loss)
-
-  # Generate a grid of images from the generator and save it to a file every 100 epochs
-  if epoch % 100 == 0:
-    generate_images(generator, epoch)
+display_image(EPOCHS)

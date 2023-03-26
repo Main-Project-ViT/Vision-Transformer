@@ -14,6 +14,57 @@ import os
 import time
 import matplotlib.pyplot as plt
 
+!pip install kaggle
+
+import os
+import json
+import zipfile
+kaggle = {
+    "username": "sajacky",
+    "api_key": "5a36788e6cc079b7e25c0712f9f15beb",
+    "on_kernel": False,
+    "dataset": {
+        "sample": "-",
+        "full": "paultimothymooney/chest-xray-pneumonia"
+        }
+}
+
+if kaggle["on_kernel"]:
+  path_prefix = '/kaggle/working/'
+else:
+  path_prefix = '/content/'
+
+# Download dataset
+def download_dataset(which_dataset):
+  data = {"username": kaggle["username"],"key": kaggle["api_key"]}
+  with open('kaggle.json', 'w') as json_file:
+      json.dump(data, json_file)
+
+  !mkdir -p ~/.kaggle
+  !cp kaggle.json ~/.kaggle/
+  !chmod 600 ~/.kaggle/kaggle.json
+  kaggle_dataset = kaggle["dataset"][which_dataset]
+  !kaggle datasets download -d $kaggle_dataset
+  
+  # Paths neeeds to be changed manually because of different directory structures, check with !ls
+  if not os.path.isdir('dataset'):
+    print("Unzipping... ")
+    zip_ref = zipfile.ZipFile('chest-xray-pneumonia.zip', 'r')
+    zip_ref.extractall('dataset')
+    zip_ref.close()
+    !rm -rf /content/dataset/chest_xray/chest_xray
+    !rm -rf /content/dataset/chest_xray/__MACOSX
+    !rm -rf /content/chest-xray-pneumonia.zip
+  
+
+  #!ls Data
+
+
+download_dataset("full")
+
+data_files = os.listdir("dataset/chest_xray")
+print(data_files)
+
 GENERATE_RES = 3
 GENERATE_SQUARE = 32 * GENERATE_RES 
 IMAGE_CHANNELS = 3
@@ -24,7 +75,7 @@ PREVIEW_MARGIN = 16
 
 SEED_SIZE = 100
 
-DATA_PATH = '/content/drive/MyDrive/dataset/PNEUMONIA'
+DATA_PATH = '/content/dataset/chest_xray/train/PNEUMONIA'
 EPOCHS = 50
 BATCH_SIZE = 32
 BUFFER_SIZE = 60000

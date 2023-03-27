@@ -273,6 +273,16 @@ def train_step(images):
         discriminator.trainable_variables))
   return gen_loss,disc_loss
 
+checkpoint_dir = './training_checkpoints'
+checkpoint_prefix = os.path.join(checkpoint_dir, "ckpt")
+checkpoint = tf.train.Checkpoint(generator_optimizer=generator_optimizer,
+                                 discriminator_optimizer=discriminator_optimizer,
+                                 generator=generator,
+                                 discriminator=discriminator)
+
+#if checkpoint exists, then
+checkpoint.restore(tf.train.latest_checkpoint(checkpoint_dir))
+
 def train(dataset, epochs):
   fixed_seed = np.random.normal(0, 1, (PREVIEW_ROWS * PREVIEW_COLS, 
                                        SEED_SIZE))
@@ -288,7 +298,12 @@ def train(dataset, epochs):
       t = train_step(image_batch)
       gen_loss_list.append(t[0])
       disc_loss_list.append(t[1])
+    
+     # Save the model every 15 epochs
+    if (epoch + 1) % 15 == 0:
+      checkpoint.save(file_prefix = checkpoint_prefix)
 
+    
     g_loss = sum(gen_loss_list) / len(gen_loss_list)
     d_loss = sum(disc_loss_list) / len(disc_loss_list)
 

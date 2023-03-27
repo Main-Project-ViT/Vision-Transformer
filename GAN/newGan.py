@@ -301,3 +301,18 @@ def train(dataset, epochs):
   print (f'Training time: {hms_string(elapsed)}')
 
 train(train_dataset, EPOCHS)
+
+import os
+import shutil
+
+# Providing the folder path
+origin = "/content/dataset/chest_xray/train/NORMAL/output/"
+target = "/content/drive/MyDrive/PROJECT/augmentation results/ashik/GAN results/1/"
+
+# Fetching the list of all the files
+files = os.listdir(origin)
+
+# Fetching all the files to directory
+for file_name in files:
+   shutil.copy(origin+file_name, target+file_name)
+print("Files are copied successfully")

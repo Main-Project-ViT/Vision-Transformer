@@ -63,8 +63,9 @@ download_dataset("full")
 data_files = os.listdir("dataset/chest_xray")
 print(data_files)
 
+
 def resample_data(move_from, move_to, cl, images_to_move=100):
-      path = path_prefix + 'dataset/chest_xray/'
+  path = path_prefix + 'dataset/chest_xray/'
 
   classes = os.listdir(path + move_from)
 
@@ -99,6 +100,7 @@ print('Number of NORMAL test images:')
 print('Number of PNEUMONIA test images:')
 !ls /content/dataset/chest_xray/test/PNEUMONIA/ | wc -l
 
+
 import os
 import cv2
 import numpy as np
@@ -127,6 +129,7 @@ train_images = np.array(train_images)
 # Normalize the pixel values to be in the range [-1, 1]
 train_images = (train_images.astype('float32') - 127.5) / 127.5
 
+
 # Batch and shuffle the data
 BUFFER_SIZE=1341
 BATCH_SIZE=256
@@ -134,46 +137,68 @@ train_dataset = tf.data.Dataset.from_tensor_slices(train_images).shuffle(BUFFER_
 
 def make_generator_model():
     model = tf.keras.Sequential()
-    model.add(layers.Dense(32*32*256, use_bias=False, input_shape=(100,)))
+
+    # Input layer
+    model.add(layers.Dense(8*8*512, use_bias=False, input_shape=(128,)))
     model.add(layers.BatchNormalization())
     model.add(layers.LeakyReLU())
 
-    model.add(layers.Reshape((32,32, 256)))
-    print(model.output_shape)
-    assert model.output_shape == (None,32,32, 256)  # Note: None is the batch size
+    # Reshape to 4x4x512
+    model.add(layers.Reshape((8, 8, 512)))
+    assert model.output_shape == (None, 8, 8, 512)
 
-    model.add(layers.Conv2DTranspose(128, (5, 5), strides=(1, 1), padding='same', use_bias=False))
-    assert model.output_shape == (None, 32,32, 128)
+    # Transposed convolutional layers
+    model.add(layers.Conv2DTranspose(256, (5, 5), strides=(2, 2), padding='same', use_bias=False))
+    assert model.output_shape == (None, 16, 16, 256)
     model.add(layers.BatchNormalization())
-    model.add(layers.LeakyReLU())
+    model.add(layers.ReLU())
+
+    model.add(layers.Conv2DTranspose(128, (5, 5), strides=(2, 2), padding='same', use_bias=False))
+    assert model.output_shape == (None, 32, 32, 128)
+    model.add(layers.BatchNormalization())
+    model.add(layers.ReLU())
 
     model.add(layers.Conv2DTranspose(64, (5, 5), strides=(2, 2), padding='same', use_bias=False))
-    assert model.output_shape == (None, 64,64, 64)
+    assert model.output_shape == (None, 64, 64, 64)
     model.add(layers.BatchNormalization())
-    model.add(layers.LeakyReLU())
+    model.add(layers.ReLU())
 
-    model.add(layers.Conv2DTranspose(1, (5, 5), strides=(2, 2), padding='same', use_bias=False, activation='tanh'))
-    print(model.output_shape)
-    assert model.output_shape == (None,128,128, 1)
+    model.add(layers.Conv2DTranspose(32, (5, 5), strides=(2, 2), padding='same', use_bias=False))
+    assert model.output_shape == (None, 128, 128, 32)
+    model.add(layers.BatchNormalization())
+    model.add(layers.ReLU())
+
+    # Output layer with tanh activation function
+    model.add(layers.Conv2DTranspose(1, (5, 5), strides=(1, 1), padding='same', use_bias=False,activation='tanh'))
+    assert model.output_shape == (None, 128, 128, 1)
 
     return model
 
+
 generator = make_generator_model()
 
-noise = tf.random.normal([1, 100])
+noise = tf.random.normal([1, 128])
 generated_image = generator(noise, training=False)
 
 plt.imshow(generated_image[0, :, :, 0], cmap='gray')
 
 def make_discriminator_model():
     model = tf.keras.Sequential()
-    model.add(layers.Conv2D(64, (5, 5), strides=(2, 2), padding='same',
+    model.add(layers.Conv2D(32, (3, 3), strides=(2, 2), padding='same',
                                      input_shape=[128, 128, 1]))
-    model.add(layers.LeakyReLU())
+    model.add(layers.LeakyReLU(alpha=0.2))
     model.add(layers.Dropout(0.3))
 
-    model.add(layers.Conv2D(128, (5, 5), strides=(2, 2), padding='same'))
-    model.add(layers.LeakyReLU())
+    model.add(layers.Conv2D(64, (3, 3), strides=(2, 2), padding='same'))
+    model.add(layers.LeakyReLU(alpha=0.2))
+    model.add(layers.Dropout(0.3))
+
+    model.add(layers.Conv2D(128, (3, 3), strides=(2, 2), padding='same'))
+    model.add(layers.LeakyReLU(alpha=0.2))
+    model.add(layers.Dropout(0.3))
+
+    model.add(layers.Conv2D(256, (3, 3), strides=(2, 2), padding='same'))
+    model.add(layers.LeakyReLU(alpha=0.2))
     model.add(layers.Dropout(0.3))
 
     model.add(layers.Flatten())
@@ -181,9 +206,10 @@ def make_discriminator_model():
 
     return model
 
+
 discriminator = make_discriminator_model()
 decision = discriminator(generated_image)
-print (decision)
+tf.print(decision)
 
 # This method returns a helper function to compute cross entropy loss
 cross_entropy = tf.keras.losses.BinaryCrossentropy(from_logits=True)
@@ -207,16 +233,14 @@ checkpoint = tf.train.Checkpoint(generator_optimizer=generator_optimizer,
                                  generator=generator,
                                  discriminator=discriminator)
 
-EPOCHS = 70
-noise_dim = 100
+EPOCHS = 50
+noise_dim = 128
 num_examples_to_generate = 16
 
 # You will reuse this seed overtime (so it's easier)
 # to visualize progress in the animated GIF)
 seed = tf.random.normal([num_examples_to_generate, noise_dim])
 
-# Notice the use of `tf.function`
-# This annotation causes the function to be "compiled".
 @tf.function
 def train_step(images):
     noise = tf.random.normal([BATCH_SIZE, noise_dim])
@@ -235,9 +259,13 @@ def train_step(images):
 
     generator_optimizer.apply_gradients(zip(gradients_of_generator, generator.trainable_variables))
     discriminator_optimizer.apply_gradients(zip(gradients_of_discriminator, discriminator.trainable_variables))
+    
+    tf.print("Generator loss:", gen_loss)
+    tf.print("Discriminator loss:", disc_loss)
 
-    def train(dataset, epochs):
-      for epoch in range(epochs):
+
+def train(dataset, epochs):
+  for epoch in range(epochs):
     start = time.time()
 
     for image_batch in dataset:
@@ -254,15 +282,17 @@ def train_step(images):
       checkpoint.save(file_prefix = checkpoint_prefix)
 
     print ('Time for epoch {} is {} sec'.format(epoch + 1, time.time()-start))
-    #print(f"Epoch {epoch+1}, Discriminator Loss: {disc_loss}, Generator Loss: {gen_loss}")
+    
   # Generate after the final epoch
   display.clear_output(wait=True)
   generate_and_save_images(generator,
                            epochs,
                            seed)
 
+import os
+
 def generate_and_save_images(model, epoch, test_input):
-      # Notice `training` is set to False.
+  # Notice `training` is set to False.
   # This is so all layers run in inference mode (batchnorm).
   predictions = model(test_input, training=False)
 
@@ -273,18 +303,34 @@ def generate_and_save_images(model, epoch, test_input):
       plt.imshow(predictions[i, :, :, 0] * 127.5 + 127.5, cmap='gray')
       plt.axis('off')
 
-  plt.savefig('image_at_epoch_{:04d}.png'.format(epoch))
+  # Create the directory if it doesn't exist
+  os.makedirs('/content/output', exist_ok=True)
+
+  plt.savefig('/content/output/image_at_epoch_{:04d}.png'.format(epoch))
   plt.show()
 
-  # Save to Google Drive
-  shutil.copy(f"image_at_epoch_{epoch:04d}.png", f"/content/drive/My Drive/GAN_images/image_at_epoch_{epoch:04d}.png")
 
 train(train_dataset, EPOCHS)
 
 checkpoint.restore(tf.train.latest_checkpoint(checkpoint_dir))
 
+import os
+import shutil
+
+# Providing the folder path
+origin = "/content/output/"
+target = "/content/drive/MyDrive/project/Ganarjun/"
+
+# Fetching the list of all the files
+files = os.listdir(origin)
+
+# Fetching all the files to directory
+for file_name in files:
+   shutil.copy(origin+file_name, target+file_name)
+print("Files are copied successfully")
+
 # Display a single image using the epoch number
 def display_image(epoch_no):
-  return PIL.Image.open('image_at_epoch_{:04d}.png'.format(epoch_no))
+  return PIL.Image.open('/content/output/image_at_epoch_{:04d}.png'.format(epoch_no))
 
 display_image(EPOCHS)

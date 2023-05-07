@@ -1,4 +1,3 @@
-!pip install tensorflow_addons
 import numpy as np
 import tensorflow as tf
 from tensorflow import keras
@@ -27,63 +26,13 @@ from tensorflow.keras.layers import Dense, Conv2D, Flatten, MaxPooling2D, Dropou
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
 from tensorflow.keras.callbacks import ModelCheckpoint, TensorBoard
 
-!pip install wandb
 import wandb
 from wandb.keras import WandbCallback
 
-!mkdir output
-!mkdir output/tmp-augmented-images/
-
 random.seed(123)
 
-kaggle = {
-    "username": "sajacky",
-    "api_key": "5a36788e6cc079b7e25c0712f9f15beb",
-    "on_kernel": False,
-    "dataset": {
-        "sample": "-",
-        "full": "paultimothymooney/chest-xray-pneumonia"
-        }
-}
-
-if kaggle["on_kernel"]:
-  path_prefix = '/kaggle/working/'
-else:
-  path_prefix = '/content/'
-
-# Download dataset
-def download_dataset(which_dataset):
-  data = {"username": kaggle["username"],"key": kaggle["api_key"]}
-  with open('kaggle.json', 'w') as json_file:
-      json.dump(data, json_file)
-
-  !mkdir -p ~/.kaggle
-  !cp kaggle.json ~/.kaggle/
-  !chmod 600 ~/.kaggle/kaggle.json
-  kaggle_dataset = kaggle["dataset"][which_dataset]
-  !kaggle datasets download -d $kaggle_dataset
-  
-  # Paths neeeds to be changed manually because of different directory structures, check with !ls
-  if not os.path.isdir('dataset'):
-    print("Unzipping... ")
-    zip_ref = zipfile.ZipFile('chest-xray-pneumonia.zip', 'r')
-    zip_ref.extractall('dataset')
-    zip_ref.close()
-    !rm -rf /content/dataset/chest_xray/chest_xray
-    !rm -rf /content/dataset/chest_xray/__MACOSX
-    !rm -rf /content/chest-xray-pneumonia.zip
-  
-
-  #!ls Data
-
-
-download_dataset("full")
-
-data_files = os.listdir("dataset/chest_xray")
-print(data_files)
-
 def resample_data(move_from, move_to, cl, images_to_move=100):
-      path = path_prefix + 'dataset/chest_xray/'
+  path = path_prefix + './dataset/chest_xray/'
 
   classes = os.listdir(path + move_from)
 
@@ -102,21 +51,6 @@ move_from, move_to = 'train/', 'val/'
 #resample_data(move_from, move_to, 'PNEUMONIA', 2534)
 
 
-
-# Training images
-print('Number of NORMAL training images:')
-!ls /content/dataset/chest_xray/train/NORMAL/ | wc -l
-print('Number of PNEUMONIA training images:')
-!ls /content/dataset/chest_xray/train/PNEUMONIA/ | wc -l
-print()
-
-
-# Test images 
-#resample_data('test/', 'val/', 'PNEUMONIA', 2690)
-print('Number of NORMAL test images:')
-!ls /content/dataset/chest_xray/test/NORMAL/ | wc -l
-print('Number of PNEUMONIA test images:')
-!ls /content/dataset/chest_xray/test/PNEUMONIA/ | wc -l
 
 
 def viewImagesFromDir(path, num=5):
@@ -140,11 +74,11 @@ def viewImagesFromDir(path, num=5):
   fig.canvas.draw()
   time.sleep(1)
 
-viewImagesFromDir('/content/dataset/chest_xray/train/NORMAL/', num=5)
+viewImagesFromDir('./dataset/chest_xray/train/NORMAL/', num=5)
 
-CLASSES = os.listdir('/content/dataset/chest_xray/train') 
-TRAINING_DATA_SET_PATH = '/content/dataset/chest_xray/train'
-TEST_DATA_SET_PATH = '/content/dataset/chest_xray/test'
+CLASSES = os.listdir('./dataset/chest_xray/train') 
+TRAINING_DATA_SET_PATH = './dataset/chest_xray/train'
+TEST_DATA_SET_PATH = './dataset/chest_xray/test'
 
 params = dict(
     seed = 123,
@@ -319,73 +253,6 @@ for i, patch in enumerate(patches[0]):
     ax = plt.subplot(n, n, i + 1)
     patch_img = tf.reshape(patch, (params['patch_size'], params['patch_size'], 3))
     plt.imshow(patch_img.numpy().astype("uint8"))
-    plt.axis("off")def mlp(x, hidden_units, dropout_rate):
-    for units in hidden_units:
-        x = layers.Dense(units, activation=tf.nn.gelu)(x)
-        x = layers.Dropout(dropout_rate)(x)
-    return x
-
-class Patches(layers.Layer):
-    def __init__(self, patch_size):
-        super(Patches, self).__init__()
-        self.patch_size = patch_size
-
-    def call(self, images):
-        batch_size = tf.shape(images)[0]
-        patches = tf.image.extract_patches(
-            images=images,
-            sizes=[1, self.patch_size, self.patch_size, 1],
-            strides=[1, self.patch_size, self.patch_size, 1],
-            rates=[1, 1, 1, 1],
-            padding="VALID",
-        )
-        patch_dims = patches.shape[-1]
-        patches = tf.reshape(patches, [batch_size, -1, patch_dims])
-        return patches
-
-    
-# Linearly transform patches by projecting it into a
-# vector of size `projection_dim` and also adds a learnable position
-# embedding to the projected vector.
-class PatchEncoder(layers.Layer):
-    def __init__(self, num_patches, projection_dim):
-        super(PatchEncoder, self).__init__()
-        self.num_patches = num_patches
-        self.projection = layers.Dense(units=projection_dim)
-        self.position_embedding = layers.Embedding(
-            input_dim=num_patches, output_dim=projection_dim
-        )
-
-    def call(self, patch):
-        positions = tf.range(start=0, limit=self.num_patches, delta=1)
-        encoded = self.projection(patch) + self.position_embedding(positions)
-        return encoded
-
-
-import matplotlib.pyplot as plt
-
-plt.figure(figsize=(4, 4))
-image, label = iter(next(train_generator))
-image = image[0]*255.
-#image = x_train[np.random.choice(range(x_train.shape[0]))]
-plt.imshow((image).astype("uint8"))
-plt.axis("off")
-
-resized_image = tf.image.resize(
-    tf.convert_to_tensor([image]), size=(params['image_dim'][0], params['image_dim'][0])
-)
-patches = Patches(params['patch_size'])(resized_image)
-print(f"Image size: {params['image_dim'][0]} X {params['image_dim'][0]}")
-print(f"Patch size: {params['patch_size']} X {params['patch_size']}")
-print(f"Patches per image: {patches.shape[1]}")
-print(f"Elements per patch: {patches.shape[-1]}")
-
-n = int(np.sqrt(patches.shape[1]))
-plt.figure(figsize=(4, 4))
-for i, patch in enumerate(patches[0]):
-    ax = plt.subplot(n, n, i + 1)
-    patch_img = tf.reshape(patch, (params['patch_size'], params['patch_size'], 3))
-    plt.imshow(patch_img.numpy().astype("uint8"))
     plt.axis("off")
 
 
@@ -477,7 +344,7 @@ def run_experiment(model):
 
     
     checkpoint_callback = keras.callbacks.ModelCheckpoint(
-        "/content/output/model_best.h5",
+        "./output/model_best.h5",
         monitor="val_f1_m",
         save_best_only=True,
         save_weights_only=True,

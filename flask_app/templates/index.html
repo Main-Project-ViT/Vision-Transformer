@@ -11,6 +11,12 @@
 		<input type="submit" name="submit" value="Upload and Save">
 	</form>
 
+	{% if response == "Normal" %}
+    	<p>Normal</p>
+	{% elif response == "Pneumonia"%}
+    	<p>Pneumonia</p>
+	{% endif %}
+
 </body>
 </html>
 

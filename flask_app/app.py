@@ -1,4 +1,6 @@
 from flask import Flask, render_template, request
+from predict import input_reshape
+import os
 
 app = Flask(__name__)
 
@@ -6,13 +8,19 @@ app = Flask(__name__)
 def index():
     return render_template('index.html')
 
-@app.route('/upload', methods=['POST'])
+@app.route('/upload', methods=['POST','GET'])
 def upload():
     file = request.files['image']
     target_dir = 'uploads/'
-    file.save(target_dir + file.filename)
+    filename = (target_dir + file.filename)
+    file.save(filename)
+    res = input_reshape(filename)
+    os.remove(filename)
+    return render_template('index.html', response=res)
 
-    return 'The file {} has been uploaded and saved.'.format(file.filename)
+# @app.route('/results', methods=['POST'])
+# def results():
+    
 
 if __name__ == '__main__':
     app.run(debug=True)
